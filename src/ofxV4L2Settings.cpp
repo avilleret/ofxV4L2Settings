@@ -21,74 +21,139 @@
 string ofxV4L2Settings::LOG_NAME = "ofxV4L2Settings";
 
 
-ofxV4L2Settings::Control::Control(int fd, const struct v4l2_queryctrl & ctrl, const struct v4l2_control & c){
-	id = c.id;
-	parameter.set((char*)ctrl.name,c.value,ctrl.minimum,ctrl.maximum);
-	step = ctrl.step;
-	type = (__u32)ctrl.type;
-	default_value = ctrl.default_value;
+void ofxV4L2Settings::addControl(int fd, const struct v4l2_queryctrl & ctrl, const struct v4l2_control & c){
+    ids.push_back(c.id);
 
-	if(ctrl.type == V4L2_CTRL_TYPE_MENU){
-		struct v4l2_querymenu menu;
-		menu.id = c.id;
-		ofLogVerbose(LOG_NAME) << "control menu for " << ctrl.name;
-		for(int j=0;j<=ctrl.maximum;j++){
-			menu.index = j;
-			if(v4l2_ioctl(fd, VIDIOC_QUERYMENU, &menu)==0){
-				ofLogVerbose(LOG_NAME) << "    " << j << ": " << menu.name;
-				menu_options.push_back((char*)menu.name);
-			}else{
-				ofLogError(LOG_NAME) << "error couldn0t get menu option " << j<< strerror(errno);
-			}
-		}
-	}
+    switch(ctrl.type){
+    case V4L2_CTRL_TYPE_INTEGER:
+    {
+        ofxDatGuiSlider * slider = parameters->addSlider((char*)ctrl.name,ctrl.minimum,ctrl.maximum,c.value);
+        slider->setPrecision(0);
+        break;
+    }
+    case V4L2_CTRL_TYPE_BOOLEAN:
+    {
+        parameters->addToggle((char*)(ctrl.name),c.value);
+        break;
+    }
+    case V4L2_CTRL_TYPE_MENU:
+    {
+        struct v4l2_querymenu menu;
+        vector<string> menu_options;
+        menu.id = c.id;
+        for(int j=0;j<=ctrl.maximum;j++){
+            menu.index = j;
+            if(v4l2_ioctl(fd, VIDIOC_QUERYMENU, &menu)==0){
+                ofLogVerbose(LOG_NAME) << "    " << j << ": " << menu.name;
+                menu_options.push_back((char*)menu.name);
+            }else{
+                ofLogError(LOG_NAME) << "error couldn0t get menu option " << j<< strerror(errno);
+            }
+        }
+        parameters->addDropdown((char*)ctrl.name,menu_options);
+        break;
+    }
+    case V4L2_CTRL_TYPE_BUTTON:
+    {
+      parameters->addButton((char*)ctrl.name);
+      break;
+    }
+    case V4L2_CTRL_TYPE_STRING:
+    {
+      parameters->addTextInput((char*)ctrl.name, (char*)ctrl.default_value);
+      break;
+    }
+    case V4L2_CTRL_TYPE_INTEGER64:
+    case V4L2_CTRL_TYPE_INTEGER_MENU:
+    default:
+    ;
+    }
 }
 
-ofxV4L2Settings::ofxV4L2Settings() {
-	fd=0;
-
+ofxV4L2Settings::ofxV4L2Settings() : parameters(nullptr), m_filename("v4l2settings.xml") {
+    fd=0;
 }
 
 ofxV4L2Settings::~ofxV4L2Settings() {
-	if(fd) v4l2_close(fd);
+    if (parameters) delete parameters;
+    if(fd) v4l2_close(fd);
+}
+
+void ofxV4L2Settings::save(string filename){
+    m_filename = filename;
+    guisettings.save(filename, parameters);
+}
+
+void ofxV4L2Settings::load(string filename){
+    guisettings.load(filename, parameters);
+}
+
+void ofxV4L2Settings::onButtonEvent(ofxDatGuiButtonEvent e)
+{
+    set(e.target->getName(),0);
+}
+
+void ofxV4L2Settings::onToggleEvent(ofxDatGuiToggleEvent e)
+{
+    set(e.target->getName(),e.checked);
+}
+
+void ofxV4L2Settings::onSliderEvent(ofxDatGuiSliderEvent e)
+{
+    set(e.target->getName(),e.value);
+}
+
+void ofxV4L2Settings::onTextInputEvent(ofxDatGuiTextInputEvent e)
+{
+    cout << "onTextInputEvent not implemented" << endl;
+}
+
+void ofxV4L2Settings::onDropdownEvent(ofxDatGuiDropdownEvent e)
+{
+    set(e.target->getName(), e.child);
 }
 
 bool ofxV4L2Settings::setup(string device){
     struct v4l2_queryctrl ctrl;
     struct v4l2_control c;
-    parameters.setName("v4l2 " + device);
+    ofSetLogLevel(OF_LOG_VERBOSE);
+
+    parameters = new ofxDatGuiFolder("v4l2 parameters of " + device);
+
+    parameters->onButtonEvent(this, &ofxV4L2Settings::onButtonEvent);
+    parameters->onToggleEvent(this, &ofxV4L2Settings::onToggleEvent);
+    parameters->onSliderEvent(this, &ofxV4L2Settings::onSliderEvent);
+    parameters->onTextInputEvent(this, &ofxV4L2Settings::onTextInputEvent);
+    parameters->onDropdownEvent(this, &ofxV4L2Settings::onDropdownEvent);
 
     fd = v4l2_open(device.c_str(), O_RDWR, 0);
-	if(fd < 0) {
-		ofLogError(LOG_NAME) <<  "Unable to open " << device.c_str() << " " << strerror(errno);
-		return false;
-	}
-
-
+    if(fd < 0) {
+        ofLogError(LOG_NAME) <<  "Unable to open " << device.c_str() << " " << strerror(errno);
+        return false;
+    }
 
 #ifdef V4L2_CTRL_FLAG_NEXT_CTRL
     /* Try the extended control API first */
     ctrl.id = V4L2_CTRL_FLAG_NEXT_CTRL;
     if(v4l2_ioctl (fd, VIDIOC_QUERYCTRL, &ctrl)==0) {
-		do {
-			c.id = ctrl.id;
-			ctrl.id |= V4L2_CTRL_FLAG_NEXT_CTRL;
-			if(ctrl.flags & V4L2_CTRL_FLAG_DISABLED) {
-				continue;
-			}
-			if(ctrl.type != V4L2_CTRL_TYPE_INTEGER &&
-			   ctrl.type != V4L2_CTRL_TYPE_BOOLEAN &&
-			   ctrl.type != V4L2_CTRL_TYPE_MENU) {
-				continue;
-			}
-			if(v4l2_ioctl(fd, VIDIOC_G_CTRL, &c) == 0) {
-				Control control(fd,ctrl,c);
-				ofLogVerbose(LOG_NAME) << "adding " << control.parameter.getName();
-				controls[control.parameter.getName()] = control;
-				control.parameter.addListener(this,&ofxV4L2Settings::parameterChanged);
-				parameters.add(control.parameter);
-			}
-		} while(v4l2_ioctl (fd, VIDIOC_QUERYCTRL, &ctrl)== 0);
+        do {
+            c.id = ctrl.id;
+            ctrl.id |= V4L2_CTRL_FLAG_NEXT_CTRL;
+            if(ctrl.flags & V4L2_CTRL_FLAG_DISABLED) {
+                continue;
+            }
+            if(ctrl.type != V4L2_CTRL_TYPE_INTEGER &&
+               ctrl.type != V4L2_CTRL_TYPE_BOOLEAN &&
+               ctrl.type != V4L2_CTRL_TYPE_BUTTON  &&
+               ctrl.type != V4L2_CTRL_TYPE_STRING  &&
+               ctrl.type != V4L2_CTRL_TYPE_MENU) {
+                continue;
+            }
+            if(v4l2_ioctl(fd, VIDIOC_G_CTRL, &c) == 0) {
+                addControl(fd,ctrl,c);
+                // control.parameter->addListener(this,&ofxV4L2Settings::parameterChanged);
+            }
+        } while(v4l2_ioctl (fd, VIDIOC_QUERYCTRL, &ctrl)== 0);
     } else
 #endif
     {
@@ -101,17 +166,16 @@ bool ofxV4L2Settings::setup(string device){
                 }
                 if(ctrl.type != V4L2_CTRL_TYPE_INTEGER &&
                    ctrl.type != V4L2_CTRL_TYPE_BOOLEAN &&
+                   ctrl.type != V4L2_CTRL_TYPE_BUTTON  &&
+                   ctrl.type != V4L2_CTRL_TYPE_STRING  &&
                    ctrl.type != V4L2_CTRL_TYPE_MENU) {
                     continue;
                 }
 
                 c.id = i;
                 if(v4l2_ioctl(fd, VIDIOC_G_CTRL, &c) == 0) {
-    				Control control(fd,ctrl,c);
-    				ofLogVerbose(LOG_NAME) << "adding " << control.parameter.getName();
-    				controls[control.parameter.getName()] = control;
-    				control.parameter.addListener(this,&ofxV4L2Settings::parameterChanged);
-    				parameters.add(control.parameter);
+                    addControl(fd,ctrl,c);
+                    // control.parameter.addListener(this,&ofxV4L2Settings::parameterChanged);
                 }
             }
         }
@@ -125,17 +189,16 @@ bool ofxV4L2Settings::setup(string device){
                 }
                 if(ctrl.type != V4L2_CTRL_TYPE_INTEGER &&
                    ctrl.type != V4L2_CTRL_TYPE_BOOLEAN &&
+                   ctrl.type != V4L2_CTRL_TYPE_BUTTON  &&
+                   ctrl.type != V4L2_CTRL_TYPE_STRING  &&
                    ctrl.type != V4L2_CTRL_TYPE_MENU) {
                     continue;
                 }
 
                 c.id = i;
                 if(v4l2_ioctl(fd, VIDIOC_G_CTRL, &c) == 0) {
-    				Control control(fd,ctrl,c);
-    				ofLogVerbose(LOG_NAME) << "adding " << control.parameter.getName();
-    				controls[control.parameter.getName()] = control;
-    				control.parameter.addListener(this,&ofxV4L2Settings::parameterChanged);
-    				parameters.add(control.parameter);
+                    addControl(fd,ctrl,c);
+                    // control.parameter.addListener(this,&ofxV4L2Settings::parameterChanged);
                 }
             } else {
                 break;
@@ -143,59 +206,59 @@ bool ofxV4L2Settings::setup(string device){
         }
     }
 
+    parameters->expand();
+
     return true;
 
 }
 
 bool ofxV4L2Settings::set(string name, int value){
-	struct v4l2_queryctrl ctrl;
-	struct v4l2_control c;
+    struct v4l2_queryctrl ctrl;
+    struct v4l2_control c;
 
-	if(controls.find(name)==controls.end()){
-		ofLogError(LOG_NAME) << name << " not found";
-		return false;
-	}else{
-		ctrl.id = controls[name].id;
-	}
-	if(v4l2_ioctl(fd, VIDIOC_QUERYCTRL, &ctrl) == 0) {
-		if(strcmp((char *)ctrl.name, name.c_str())) {
-			ofLogError() << "Control name mismatch " << name <<"!="<< ctrl.name;
-			return false;
-		}
+    int i = 0;
+    for ( ; i<parameters->children.size(); i++){
+        if (parameters->children[i]->is(name)){
+            ctrl.id = ids[i];
+            break;
+        }
+    }
+    if (i==parameters->children.size()) {
+        ofLogError(LOG_NAME) << name << " not found";
+        return false;
+    }
 
-		if(ctrl.flags & (V4L2_CTRL_FLAG_READ_ONLY |
-						 V4L2_CTRL_FLAG_DISABLED |
-						 V4L2_CTRL_FLAG_GRABBED)) {
-			ofLogError(LOG_NAME) << name << " not writable";
-			return false;
-		}
-		if(ctrl.type != V4L2_CTRL_TYPE_INTEGER &&
-		   ctrl.type != V4L2_CTRL_TYPE_BOOLEAN &&
-		   ctrl.type != V4L2_CTRL_TYPE_MENU) {
-			ofLogError(LOG_NAME) << name << " type not supported";
-			return false;
-		}
-		c.id = ctrl.id;
-		c.value = value;
-		if(v4l2_ioctl(fd, VIDIOC_S_CTRL, &c) != 0) {
-			ofLogError(LOG_NAME) << "Failed to set control " << name << " error: " << strerror(errno);
-			return false;
-		}
-	} else {
+    if(v4l2_ioctl(fd, VIDIOC_QUERYCTRL, &ctrl) == 0) {
+        if(strcmp((char *)ctrl.name, name.c_str())) {
+            ofLogError() << "Control name mismatch " << name <<"!="<< ctrl.name;
+            return false;
+        }
 
-		ofLogError(LOG_NAME) << "Error querying control " << name << strerror(errno);
-		return false;
-	}
+        if(ctrl.flags & (V4L2_CTRL_FLAG_READ_ONLY |
+                         V4L2_CTRL_FLAG_DISABLED |
+                         V4L2_CTRL_FLAG_GRABBED)) {
+            ofLogError(LOG_NAME) << name << " not writable";
+            return false;
+        }
+        if(ctrl.type != V4L2_CTRL_TYPE_INTEGER &&
+           ctrl.type != V4L2_CTRL_TYPE_BOOLEAN &&
+           ctrl.type != V4L2_CTRL_TYPE_BUTTON  &&
+           ctrl.type != V4L2_CTRL_TYPE_STRING  &&
+           ctrl.type != V4L2_CTRL_TYPE_MENU) {
+            ofLogError(LOG_NAME) << name << " type not supported";
+            return false;
+        }
+        c.id = ctrl.id;
+        c.value = value;
+        if(v4l2_ioctl(fd, VIDIOC_S_CTRL, &c) != 0) {
+            ofLogError(LOG_NAME) << "Failed to set control " << name << " error: " << strerror(errno);
+            return false;
+        }
+    } else {
 
-	return true;
-}
+        ofLogError(LOG_NAME) << "Error querying control " << name << strerror(errno);
+        return false;
+    }
 
-void ofxV4L2Settings::parameterChanged(const void * sender,int & value){
-	ofParameter<int> & param = *(ofParameter<int>*)sender;
-	set(param.getName(),value);
-	if(controls[param.getName()].type==V4L2_CTRL_TYPE_MENU && value<(int)controls[param.getName()].menu_options.size()){
-		ofLogVerbose(LOG_NAME) << param.getName() << "=" << controls[param.getName()].menu_options[value];
-	}else{
-		ofLogVerbose(LOG_NAME) << param.getName() << "=" << value;
-	}
+    return true;
 }

@@ -2,65 +2,34 @@
 
 //--------------------------------------------------------------
 void ofApp::setup(){
-	gui.setup("panel","settings.xml",0,0);
-	settings.setup("/dev/video0");
-	gui.add(settings.parameters);
+    gui = new ofxDatGui();
+    gui->addHeader("V4L2Settings");
+    settings.setup("/dev/video0");
+    gui->addButton("save");
+    gui->addButton("load");
+    gui->addFolder(settings.parameters);
 
-	grabber.initGrabber(640,480);
+    gui->onButtonEvent(this, &ofApp::onButtonEvent);
+
+    grabber.initGrabber(640,480);
 }
 
 //--------------------------------------------------------------
 void ofApp::update(){
-	grabber.update();
+    grabber.update();
 }
 
 //--------------------------------------------------------------
 void ofApp::draw(){
-	grabber.draw(200,0);
-	gui.draw();
+    grabber.draw(200,0);
 }
 
-//--------------------------------------------------------------
-void ofApp::keyPressed(int key){
-
-}
-
-//--------------------------------------------------------------
-void ofApp::keyReleased(int key){
-
-}
-
-//--------------------------------------------------------------
-void ofApp::mouseMoved(int x, int y ){
-
-}
-
-//--------------------------------------------------------------
-void ofApp::mouseDragged(int x, int y, int button){
-
-}
-
-//--------------------------------------------------------------
-void ofApp::mousePressed(int x, int y, int button){
-
-}
-
-//--------------------------------------------------------------
-void ofApp::mouseReleased(int x, int y, int button){
-
-}
-
-//--------------------------------------------------------------
-void ofApp::windowResized(int w, int h){
-
-}
-
-//--------------------------------------------------------------
-void ofApp::gotMessage(ofMessage msg){
-
-}
-
-//--------------------------------------------------------------
-void ofApp::dragEvent(ofDragInfo dragInfo){
-
+void ofApp::onButtonEvent(ofxDatGuiButtonEvent e){
+    if ( e.target->is("save")){
+        ofLogNotice("ofApp") << "save settings";
+        settings.save("settings.xml");
+    } else if (e.target->is("load")){
+        ofLogNotice("ofApp") << "reload settings";
+        settings.load();
+    }
 }
