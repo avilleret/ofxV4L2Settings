@@ -26,6 +26,10 @@ public:
     void load(string filename);
     void load(){load(m_filename);}
     string getFilename(){return m_filename;}
+    void setFilename(string file){
+        m_filename = file;
+        return;
+    }
 
 /*
     struct Control{
