@@ -68,7 +68,7 @@ public:
         return nullptr;
     }
 
-    ofxDatGuiFolder *parameters;
+    ofxDatGuiFolder *parameters{};
     ofxDatGuiSettings guisettings;
 
     static string LOG_NAME;
