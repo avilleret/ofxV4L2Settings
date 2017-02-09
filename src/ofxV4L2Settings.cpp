@@ -116,7 +116,6 @@ void ofxV4L2Settings::onDropdownEvent(ofxDatGuiDropdownEvent e)
 bool ofxV4L2Settings::setup(string device){
     struct v4l2_queryctrl ctrl;
     struct v4l2_control c;
-    ofSetLogLevel(OF_LOG_VERBOSE);
 
     parameters = new ofxDatGuiFolder("v4l2 parameters of " + device);
 
