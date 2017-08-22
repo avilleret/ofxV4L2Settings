@@ -131,6 +131,26 @@ bool ofxV4L2Settings::setup(string device){
         return false;
     }
 
+    std::vector<std::string> inputs;
+    v4l2_input input;
+    input.index = 0;
+    while ( v4l2_ioctl (fd, VIDIOC_ENUMINPUT, &input) != EINVAL)
+    {
+      std::stringstream ss;
+      if (input.name[0] != '\0')
+        ss << input.name;
+      else
+        ss << "untitled input " << input.index;
+
+      inputs.push_back(ss.str());
+      input.index++;
+    }
+    if (!inputs.empty())
+    {
+      ofxDatGuiFolder* input_folder = parameters->addFolder("input");
+      input_folder->addDropdown("inputs", inputs);
+    }
+
 #ifdef V4L2_CTRL_FLAG_NEXT_CTRL
     /* Try the extended control API first */
     ctrl.id = V4L2_CTRL_FLAG_NEXT_CTRL;
