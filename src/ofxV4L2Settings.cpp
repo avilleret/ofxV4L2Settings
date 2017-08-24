@@ -134,7 +134,7 @@ bool ofxV4L2Settings::setup(string device){
     std::vector<std::string> inputs;
     v4l2_input input;
     input.index = 0;
-    while ( v4l2_ioctl (fd, VIDIOC_ENUMINPUT, &input) != EINVAL)
+    while ( v4l2_ioctl (fd, VIDIOC_ENUMINPUT, &input) == 0)
     {
       std::stringstream ss;
       if (input.name[0] != '\0')
