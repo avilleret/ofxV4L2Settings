@@ -71,12 +71,12 @@ void ofxV4L2Settings::addControl(int fd, const struct v4l2_queryctrl & ctrl, con
 }
 
 ofxV4L2Settings::ofxV4L2Settings() : parameters(nullptr), m_filename("v4l2settings.xml") {
-    fd=0;
+    m_fd=0;
 }
 
 ofxV4L2Settings::~ofxV4L2Settings() {
     if (parameters) delete parameters;
-    if(fd) v4l2_close(fd);
+    if(m_fd) v4l2_close(m_fd);
 }
 
 void ofxV4L2Settings::save(string filename){
@@ -125,36 +125,38 @@ bool ofxV4L2Settings::setup(string device){
     parameters->onTextInputEvent(this, &ofxV4L2Settings::onTextInputEvent);
     parameters->onDropdownEvent(this, &ofxV4L2Settings::onDropdownEvent);
 
-    fd = v4l2_open(device.c_str(), O_RDWR, 0);
-    if(fd < 0) {
+    m_fd = v4l2_open(device.c_str(), O_RDWR, 0);
+    if(m_fd < 0) {
         ofLogError(LOG_NAME) <<  "Unable to open " << device.c_str() << " " << strerror(errno);
         return false;
     }
 
+    v4l2_input vin;
     std::vector<std::string> inputs;
-    v4l2_input input;
-    input.index = 0;
-    while ( v4l2_ioctl (fd, VIDIOC_ENUMINPUT, &input) == 0)
-    {
-      std::stringstream ss;
-      if (input.name[0] != '\0')
-        ss << input.name;
-      else
-        ss << "untitled input " << input.index;
+    if (v4l2_enum_input(vin, true)) {
+      do {
+        inputs.push_back((char *)(vin.name));
+        std::cout << "*************************************************************** V4L2 input: " << vin.name << std::endl;
+      } while (v4l2_enum_input(vin));
+    }
 
-      inputs.push_back(ss.str());
-      input.index++;
-    }
-    if (!inputs.empty())
+    if(inputs.size() > 1)
     {
-      ofxDatGuiFolder* input_folder = parameters->addFolder("input");
-      input_folder->addDropdown("inputs", inputs);
+      auto dd = parameters->addDropdown("input", inputs);
+      dd->onDropdownEvent([&](ofxDatGuiDropdownEvent e)
+      {
+        int input = e.child;
+        if(ioctl(m_fd, VIDIOC_S_INPUT, &input)<0)
+          ofLogError("grabber_v4l2") << "can't set input to " << inputs[input];
+      });
+
     }
+    // change input on a given device
 
 #ifdef V4L2_CTRL_FLAG_NEXT_CTRL
     /* Try the extended control API first */
     ctrl.id = V4L2_CTRL_FLAG_NEXT_CTRL;
-    if(v4l2_ioctl (fd, VIDIOC_QUERYCTRL, &ctrl)==0) {
+    if(v4l2_ioctl (m_fd, VIDIOC_QUERYCTRL, &ctrl)==0) {
         do {
             c.id = ctrl.id;
             ctrl.id |= V4L2_CTRL_FLAG_NEXT_CTRL;
@@ -168,18 +170,18 @@ bool ofxV4L2Settings::setup(string device){
                ctrl.type != V4L2_CTRL_TYPE_MENU) {
                 continue;
             }
-            if(v4l2_ioctl(fd, VIDIOC_G_CTRL, &c) == 0) {
-                addControl(fd,ctrl,c);
+            if(v4l2_ioctl(m_fd, VIDIOC_G_CTRL, &c) == 0) {
+                addControl(m_fd,ctrl,c);
                 // control.parameter->addListener(this,&ofxV4L2Settings::parameterChanged);
             }
-        } while(v4l2_ioctl (fd, VIDIOC_QUERYCTRL, &ctrl)== 0);
+        } while(v4l2_ioctl (m_fd, VIDIOC_QUERYCTRL, &ctrl)== 0);
     } else
 #endif
     {
         /* Check all the standard controls */
         for(int i=V4L2_CID_BASE; i<V4L2_CID_LASTP1; i++) {
             ctrl.id = i;
-            if(v4l2_ioctl(fd, VIDIOC_QUERYCTRL, &ctrl) == 0) {
+            if(v4l2_ioctl(m_fd, VIDIOC_QUERYCTRL, &ctrl) == 0) {
                 if(ctrl.flags & V4L2_CTRL_FLAG_DISABLED) {
                     continue;
                 }
@@ -192,8 +194,8 @@ bool ofxV4L2Settings::setup(string device){
                 }
 
                 c.id = i;
-                if(v4l2_ioctl(fd, VIDIOC_G_CTRL, &c) == 0) {
-                    addControl(fd,ctrl,c);
+                if(v4l2_ioctl(m_fd, VIDIOC_G_CTRL, &c) == 0) {
+                    addControl(m_fd,ctrl,c);
                     // control.parameter.addListener(this,&ofxV4L2Settings::parameterChanged);
                 }
             }
@@ -202,7 +204,7 @@ bool ofxV4L2Settings::setup(string device){
         /* Check any custom controls */
         for(int i=V4L2_CID_PRIVATE_BASE; ; i++) {
             ctrl.id = i;
-            if(v4l2_ioctl(fd, VIDIOC_QUERYCTRL, &ctrl) == 0) {
+            if(v4l2_ioctl(m_fd, VIDIOC_QUERYCTRL, &ctrl) == 0) {
                 if(ctrl.flags & V4L2_CTRL_FLAG_DISABLED) {
                     continue;
                 }
@@ -215,8 +217,8 @@ bool ofxV4L2Settings::setup(string device){
                 }
 
                 c.id = i;
-                if(v4l2_ioctl(fd, VIDIOC_G_CTRL, &c) == 0) {
-                    addControl(fd,ctrl,c);
+                if(v4l2_ioctl(m_fd, VIDIOC_G_CTRL, &c) == 0) {
+                    addControl(m_fd,ctrl,c);
                     // control.parameter.addListener(this,&ofxV4L2Settings::parameterChanged);
                 }
             } else {
@@ -229,6 +231,20 @@ bool ofxV4L2Settings::setup(string device){
 
     return true;
 
+}
+
+bool ofxV4L2Settings::v4l2_enum_input(v4l2_input &in, bool init, int index)
+{
+  if(m_fd<0)
+    return false;
+
+  if (init) {
+    memset(&in, 0, sizeof(in));
+    in.index = index;
+  } else {
+    in.index++;
+  }
+  return ioctl(m_fd, VIDIOC_ENUMINPUT, &in) >= 0;
 }
 
 bool ofxV4L2Settings::set(string name, int value){
@@ -247,7 +263,7 @@ bool ofxV4L2Settings::set(string name, int value){
         return false;
     }
 
-    if(v4l2_ioctl(fd, VIDIOC_QUERYCTRL, &ctrl) == 0) {
+    if(v4l2_ioctl(m_fd, VIDIOC_QUERYCTRL, &ctrl) == 0) {
         if(strcmp((char *)ctrl.name, name.c_str())) {
             ofLogError() << "Control name mismatch " << name <<"!="<< ctrl.name;
             return false;
@@ -269,7 +285,7 @@ bool ofxV4L2Settings::set(string name, int value){
         }
         c.id = ctrl.id;
         c.value = value;
-        if(v4l2_ioctl(fd, VIDIOC_S_CTRL, &c) != 0) {
+        if(v4l2_ioctl(m_fd, VIDIOC_S_CTRL, &c) != 0) {
             ofLogError(LOG_NAME) << "Failed to set control " << name << " error: " << strerror(errno);
             return false;
         }

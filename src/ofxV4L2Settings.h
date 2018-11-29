@@ -74,10 +74,10 @@ public:
     static string LOG_NAME;
 
 private:
-    int fd;
+    int m_fd;
     vector<int> ids;
     void addControl(int fd, const struct v4l2_queryctrl & ctrl, const struct v4l2_control & c);
-
+    bool v4l2_enum_input(v4l2_input &in, bool init = false, int index = 0);
     void onButtonEvent(ofxDatGuiButtonEvent e);
     void onToggleEvent(ofxDatGuiToggleEvent e);
     void onSliderEvent(ofxDatGuiSliderEvent e);
